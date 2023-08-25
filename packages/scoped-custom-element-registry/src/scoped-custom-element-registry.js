@@ -360,6 +360,100 @@ if (!ShadowRoot.prototype.createElement) {
         }
       };
     }
+
+    /**
+     * @param {AttributeNode} attributeNode
+     * @param {Element} element
+     */
+    const patchAttributeNode = function (attributeNode, element) {
+      if (Object.prototype.hasOwnProperty.call(attributeNode, 'value')) {
+        // Already patched
+        return;
+      }
+
+      Object.defineProperty(attributeNode, 'value', {
+        get() {
+          return Reflect.get(
+            Object.getPrototypeOf(attributeNode),
+            'value',
+            attributeNode
+          );
+        },
+        set(newValue) {
+          const oldValue = element.getAttribute(attributeNode.name);
+          Reflect.set(
+            Object.getPrototypeOf(attributeNode),
+            'value',
+            newValue,
+            attributeNode
+          );
+          attributeChangedCallback.call(
+            element,
+            attributeNode.name,
+            oldValue,
+            newValue
+          );
+        },
+        configurable: true,
+      });
+    };
+
+    const setAttributeNode = elementClass.prototype.setAttributeNode;
+    if (setAttributeNode) {
+      elementClass.prototype.setAttributeNode = function (node) {
+        const oldValue = this.getAttribute(node.name);
+        patchAttributeNode(node, this);
+        setAttributeNode.call(this, node);
+        attributeChangedCallback.call(this, node.name, oldValue, node.value);
+      };
+    }
+
+    const getAttributeNode = elementClass.prototype.getAttributeNode;
+    if (getAttributeNode) {
+      elementClass.prototype.getAttributeNode = function () {
+        const attributeNode = getAttributeNode.apply(this, arguments);
+        patchAttributeNode(attributeNode, this);
+        return attributeNode;
+      };
+    }
+
+    Object.defineProperty(elementClass.prototype, 'attributes', {
+      get() {
+        const attributes = Reflect.get(
+          Object.getPrototypeOf(elementClass.prototype),
+          'attributes',
+          this
+        );
+
+        for (const attribute of attributes) {
+          patchAttributeNode(attribute, this);
+        }
+
+        return attributes;
+      },
+      configurable: true,
+    });
+
+    const removeAttributeNode = elementClass.prototype.removeAttributeNode;
+    if (removeAttributeNode) {
+      elementClass.prototype.removeAttributeNode = function (attributeNode) {
+        const result = removeAttributeNode.call(this, attributeNode);
+
+        if (result) {
+          attributeChangedCallback.call(
+            this,
+            attributeNode.name,
+            attributeNode.value,
+            null
+          );
+          if (Object.prototype.hasOwnProperty.call(attributeNode, 'value')) {
+            delete attributeNode.value;
+          }
+        }
+
+        return result;
+      };
+    }
   };
 
   // Helper to patch CE class hierarchy changing those CE classes created before applying the polyfill
